@@ -1,50 +1,46 @@
-# Janus Patrol Tracking System
+# MediaMTX Patrol Tracking System
 
-ระบบติดตามการลาดตระเวน Real-time — ทหารส่ง Live Video + GPS จากมือถือ มายังศูนย์บัญชาการผ่าน WebRTC
+ระบบติดตามการลาดตระเวน Real-time — ทหารส่ง Live Video (WebRTC) + GPS จากมือถือ มายังศูนย์บัญชาการผ่าน MediaMTX (WHIP/WHEP)
 
 ## สถาปัตยกรรม
 
 ```
-[ทหาร A/B/C มือถือ] ──WebRTC publish──▶ [Janus VideoRoom]
-        │                                       │
-        │ GPS (Socket.IO)               subscribe│
-        ▼                                       ▼
-   [Node.js API] ──save──▶ [PostgreSQL]    [Center Dashboard]
-        │                                  ├── แผนที่ Leaflet + markers
-        │ Socket.IO broadcast             └── Live Video popup
-        └──────────────────────────────────────▶
+[ทหาร A/B/C มือถือ] ──WHIP publish──▶ [MediaMTX]
+        │                                    │
+        │ GPS (Socket.IO)           WHEP subscribe
+        ▼                                    ▼
+   [Node.js API] ──save──▶ [PostgreSQL]  [Center Dashboard]
+        │                                 ├── แผนที่ Leaflet + markers
+        │ Socket.IO broadcast            └── Live Video popup
+        └───────────────────────────────────▶
 
-┌──────────────────────────────────────────────────────┐
-│                   Docker Compose                     │
-│                                                      │
-│  ┌────────┐ ┌────────┐ ┌──────┐ ┌────────┐ ┌──────┐ │
-│  │ Janus* │ │ API    │ │Caddy │ │Postgres│ │Coturn│ │
-│  │ :8188  │ │ :3000  │ │:80/443│ │ :5432  │ │:3478 │ │
-│  └────────┘ └────────┘ └──────┘ └────────┘ └──────┘ │
-│  * host network                                      │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                   Docker Compose                         │
+│                                                          │
+│  ┌─────────┐ ┌────────┐ ┌──────┐ ┌────────┐ ┌──────┐    │
+│  │MediaMTX*│ │ API    │ │Caddy │ │Postgres│ │Coturn│    │
+│  │:8889    │ │ :3000  │ │:80/443│ │ :5432  │ │:3478 │    │
+│  └─────────┘ └────────┘ └──────┘ └────────┘ └──────┘    │
+│  * host network                                          │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Services
 
 | Service | Image | หน้าที่ |
 |---------|-------|---------|
-| **janus** | `canyan/janus-gateway` (host network) | WebRTC media server — VideoRoom plugin |
+| **mediamtx** | `bluenviron/mediamtx` (host network) | WebRTC media server — WHIP/WHEP protocol |
 | **api** | Node.js (Express + Socket.IO) | REST API + real-time GPS relay + บันทึกลง DB |
 | **postgres** | `postgres:16-alpine` | เก็บข้อมูลทหาร + GPS history ย้อนหลัง |
 | **caddy** | `caddy:2-alpine` | Reverse proxy + auto HTTPS (Let's Encrypt) |
 | **coturn** | `coturn/coturn` | TURN server สำหรับ NAT traversal |
-
-## Demo
-
-**Production:** https://radsys-claude.sumana.org
 
 ## Quick Start
 
 ```bash
 # 1. ตั้งค่า
 cp .env.example .env
-# แก้ DOMAIN เป็น domain จริง, JANUS_HOST เป็น IP จริงของ server
+# แก้ DOMAIN เป็น domain จริง, MEDIAMTX_HOST เป็น IP จริงของ server
 # ห้ามใช้ host.docker.internal บน Linux — ใช้ IP จริงเท่านั้น
 
 # 2. Start
@@ -86,9 +82,8 @@ docker compose up -d --build
 
 | Event | ทิศทาง | ข้อมูล |
 |-------|--------|--------|
-| `soldier:join` | ทหาร → API | `{ callsign, name, janusFeed }` |
+| `soldier:join` | ทหาร → API | `{ callsign, name, streamPath }` |
 | `soldier:gps` | ทหาร → API | `{ lat, lng, accuracy }` |
-| `soldier:feed` | ทหาร → API | `{ feedId }` (Janus VideoRoom feed ID) |
 | `soldier:position` | API → ทุกคน | `{ soldierId, callsign, lat, lng, accuracy }` |
 | `soldier:online` | API → ทุกคน | ทหารเข้าระบบ |
 | `soldier:offline` | API → ทุกคน | ทหารออกจากระบบ |
@@ -102,18 +97,15 @@ docker compose up -d --build
 │   ├── package.json
 │   ├── server.js              # Express + Socket.IO server
 │   └── db.js                  # PostgreSQL connection + schema
-├── janus/
-│   ├── janus.jcfg             # Config หลัก (NAT/TURN)
-│   ├── janus.transport.websockets.jcfg
-│   └── janus.plugin.streaming.jcfg
+├── mediamtx/
+│   └── mediamtx.yml           # MediaMTX config (WebRTC, ICE servers)
 ├── caddy/
 │   └── Caddyfile              # Reverse proxy + auto HTTPS
 ├── coturn/
 │   └── turnserver.conf
 └── docs/
     ├── center.html            # ศูนย์บัญชาการ (แผนที่ + video)
-    ├── soldier.html           # หน้าทหาร (ส่ง video + GPS)
-    └── test.html              # ทดสอบ WebRTC พื้นฐาน
+    └── soldier.html           # หน้าทหาร (ส่ง video + GPS)
 ```
 
 ## Configuration
@@ -122,10 +114,10 @@ docker compose up -d --build
 
 | Key | Value |
 |-----|-------|
-| Username | `janus` |
-| Password | `januspass` |
+| Username | `patrol` |
+| Password | `patrolpass` |
 
-ต้องตรงกัน 3 ที่: `coturn/turnserver.conf`, `janus/janus.jcfg`, และ iceServers ใน HTML files
+ต้องตรงกัน 2 ที่: `coturn/turnserver.conf` และ iceServers ใน HTML files
 
 ### Caddy (HTTPS)
 
@@ -133,22 +125,50 @@ docker compose up -d --build
 - WebRTC บนมือถือ **ต้องใช้ HTTPS** (getUserMedia บังคับ secure context)
 - Caddyfile ใช้ `handle` blocks จัดลำดับ — proxy routes ต้องอยู่ก่อน file_server
 
-### Janus Network
+### MediaMTX Network
 
-- Janus ใช้ `network_mode: host` เพื่อให้ ICE candidates เป็น host IP ตรงๆ (แก้ปัญหา ICE failed ใน Docker bridge network)
-- `JANUS_HOST` ใน `.env` ต้องเป็น IP จริงของ server (`host.docker.internal` ใช้ได้แค่ Docker Desktop ไม่ใช่ Linux)
+- MediaMTX ใช้ `network_mode: host` เพื่อให้ ICE candidates เป็น host IP ตรงๆ (แก้ปัญหา ICE failed ใน Docker bridge network)
+- `MEDIAMTX_HOST` ใน `.env` ต้องเป็น IP จริงของ server (`host.docker.internal` ใช้ได้แค่ Docker Desktop ไม่ใช่ Linux)
 
-### ส่ง Stream ด้วย FFmpeg (เสริม)
+### WHIP/WHEP Protocol
 
-```bash
-ffmpeg -re -i input.mp4 \
-  -c:v libx264 -preset veryfast -tune zerolatency \
-  -f rtp rtp://localhost:5004
-```
+MediaMTX ใช้ HTTP-based signaling แทน WebSocket:
+
+| Protocol | Method | URL | หน้าที่ |
+|----------|--------|-----|---------|
+| WHIP | POST | `/streams/{streamPath}/whip` | Publish video (ทหาร) |
+| WHEP | POST | `/streams/{streamPath}/whep` | Subscribe video (ศูนย์) |
+
+- `streamPath` = callsign ของทหาร
+- ไม่ต้องใช้ WebSocket signaling
+
+## Ports
+
+| Port | Service |
+|------|---------|
+| 80 | Caddy HTTP (→ redirect HTTPS) |
+| 443 | Caddy HTTPS (web + proxy) |
+| 8889 | MediaMTX WebRTC (WHIP/WHEP) |
+| 9997 | MediaMTX API |
+| 3478 | Coturn TURN |
+| 49152-49200/udp | Coturn relay ports |
 
 ## Latency
 
 | แบบ | Latency |
 |-----|---------|
 | WebRTC (มือถือ → Center) | ~200–500 ms |
-| RTSP → Janus → WebRTC | ~1 s |
+
+## Migration from Janus
+
+โปรเจคนี้ fork มาจาก janus-patrol-tracking และปรับเปลี่ยนดังนี้:
+
+| Before (Janus) | After (MediaMTX) |
+|----------------|------------------|
+| WebSocket signaling (janus-protocol) | HTTP (WHIP/WHEP) |
+| VideoRoom plugin | Stream-based |
+| feedId (integer) | stream_path (string) |
+| Port 8188 (WS) | Port 8889 (WebRTC) |
+| janus_feed column | stream_path column |
+| JANUS_HOST env | MEDIAMTX_HOST env |
+| janus/januspass TURN | patrol/patrolpass TURN |
