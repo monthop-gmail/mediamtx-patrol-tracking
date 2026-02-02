@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patrol — Soldier</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #111; color: #eee; display: flex; flex-direction: column; height: 100vh; }
+    #setup { display: flex; flex-direction: column; gap: 12px; padding: 24px; align-items: center; justify-content: center; flex: 1; }
+    #setup input { font-size: 18px; padding: 10px 16px; border-radius: 8px; border: 1px solid #555; background: #222; color: #fff; width: 260px; text-align: center; }
+    #setup button { font-size: 18px; padding: 12px 32px; border-radius: 8px; border: none; background: #2a7; color: #fff; cursor: pointer; }
+    #streaming { display: none; flex-direction: column; height: 100vh; }
+    video { flex: 1; background: #000; object-fit: cover; }
+    #status-bar { padding: 10px 16px; background: #1a1a1a; font-size: 14px; display: flex; justify-content: space-between; }
+    .online { color: #2a7; }
+    .offline { color: #a33; }
+  </style>
+</head>
+<body>
+
+<div id="setup">
+  <h2>ระบบลาดตระเวน</h2>
+  <input id="callsign" placeholder="Callsign (เช่น Alpha-1)" />
+  <input id="name" placeholder="ชื่อ (ไม่บังคับ)" />
+  <button onclick="startPatrol()">เริ่มส่งสัญญาณ</button>
+</div>
+
+<div id="streaming">
+  <video id="localVideo" autoplay playsinline muted></video>
+  <div id="status-bar">
+    <span id="gps-status">GPS: รอสัญญาณ...</span>
+    <span id="stream-status" class="offline">กำลังเชื่อมต่อ...</span>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// MediaMTX WHIP endpoint
+const WHIP_BASE = location.protocol === "https:"
+  ? `${location.origin}/streams`
+  : `http://${location.hostname}:8889`;
+
+let socket, pc, stream;
+let currentCallsign = null;
+
+async function startPatrol() {
+  const callsign = document.getElementById("callsign").value.trim();
+  if (!callsign) return alert("กรุณาใส่ Callsign");
+  const name = document.getElementById("name").value.trim();
+  currentCallsign = callsign;
+
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("streaming").style.display = "flex";
+
+  // 1) เปิดกล้อง
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    });
+    document.getElementById("localVideo").srcObject = stream;
+  } catch (err) {
+    alert("ไม่สามารถเปิดกล้องได้: " + err.message);
+    return;
+  }
+
+  // 2) เชื่อมต่อ Socket.IO
+  socket = io();
+  socket.on("connect", () => {
+    socket.emit("soldier:join", { callsign, name });
+  });
+  socket.on("soldier:registered", (soldier) => {
+    console.log("registered", soldier);
+  });
+
+  // 3) GPS
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        document.getElementById("gps-status").textContent =
+          `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} (±${Math.round(accuracy)}m)`;
+        socket.emit("soldier:gps", { lat, lng, accuracy });
+      },
+      (err) => {
+        document.getElementById("gps-status").textContent = `GPS: ${err.message}`;
+      },
+      { enableHighAccuracy: true, maximumAge: 3000 }
+    );
+  }
+
+  // 4) เชื่อมต่อ MediaMTX via WHIP (publish)
+  publishWHIP(callsign);
+}
+
+/* ====== MediaMTX WHIP Publisher ====== */
+
+async function publishWHIP(streamPath) {
+  document.getElementById("stream-status").textContent = "กำลังเชื่อมต่อ...";
+  document.getElementById("stream-status").className = "offline";
+
+  pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: `turn:${location.hostname}:3478`, username: "patrol", credential: "patrolpass" }
+    ]
+  });
+
+  // Add tracks
+  stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+  // Handle ICE connection state
+  pc.oniceconnectionstatechange = () => {
+    console.log("ICE state:", pc.iceConnectionState);
+    if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      document.getElementById("stream-status").textContent = "กำลังส่ง Live";
+      document.getElementById("stream-status").className = "online";
+      // แจ้ง API ว่า stream พร้อมแล้ว
+      if (socket) socket.emit("soldier:stream", { streamPath });
+    } else if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+      document.getElementById("stream-status").textContent = "ขาดการเชื่อมต่อ";
+      document.getElementById("stream-status").className = "offline";
+      // Retry after 3 seconds
+      setTimeout(() => {
+        if (currentCallsign) {
+          pc.close();
+          publishWHIP(currentCallsign);
+        }
+      }, 3000);
+    }
+  };
+
+  try {
+    // Create offer
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Wait for ICE gathering to complete
+    await waitForICEGathering(pc);
+
+    // Send offer to WHIP endpoint
+    const whipUrl = `${WHIP_BASE}/${encodeURIComponent(streamPath)}/whip`;
+    console.log("WHIP URL:", whipUrl);
+
+    const response = await fetch(whipUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: pc.localDescription.sdp
+    });
+
+    if (!response.ok) {
+      throw new Error(`WHIP failed: ${response.status} ${await response.text()}`);
+    }
+
+    // Set remote answer
+    const answerSdp = await response.text();
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+    console.log("WHIP publish started successfully");
+  } catch (err) {
+    console.error("WHIP error:", err);
+    document.getElementById("stream-status").textContent = "เชื่อมต่อล้มเหลว";
+    document.getElementById("stream-status").className = "offline";
+    // Retry
+    setTimeout(() => {
+      if (currentCallsign) {
+        pc.close();
+        publishWHIP(currentCallsign);
+      }
+    }, 3000);
+  }
+}
+
+// Wait for ICE gathering to complete
+function waitForICEGathering(pc) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") {
+      resolve();
+    } else {
+      const checkState = () => {
+        if (pc.iceGatheringState === "complete") {
+          pc.removeEventListener("icegatheringstatechange", checkState);
+          resolve();
+        }
+      };
+      pc.addEventListener("icegatheringstatechange", checkState);
+      // Timeout after 5 seconds
+      setTimeout(resolve, 5000);
+    }
+  });
+}
+</script>
+</body>
+</html>

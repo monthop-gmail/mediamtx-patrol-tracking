@@ -1,0 +1,25 @@
+{$DOMAIN} {
+  handle /api/* {
+    reverse_proxy api:3000
+  }
+
+  handle /socket.io/* {
+    reverse_proxy api:3000
+  }
+
+  # MediaMTX WebRTC (WHIP/WHEP)
+  handle /streams/* {
+    reverse_proxy {$MEDIAMTX_HOST}:8889
+  }
+
+  # MediaMTX API (optional)
+  handle /v3/* {
+    reverse_proxy {$MEDIAMTX_HOST}:9997
+  }
+
+  handle {
+    root * /srv
+    try_files {path} /center.html
+    file_server
+  }
+}

@@ -1,0 +1,44 @@
+###############################################
+# MediaMTX Configuration for Patrol Tracking
+###############################################
+
+# Logging
+logLevel: info
+logDestinations: [stdout]
+
+# API
+api: yes
+apiAddress: :9997
+
+# WebRTC (WHIP/WHEP) - Main protocol for this project
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcServerKey: ""
+webrtcServerCert: ""
+webrtcAllowOrigin: "*"
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+  - url: turn:localhost:3478
+    username: patrol
+    password: patrolpass
+
+# RTSP (optional, disabled)
+rtsp: no
+rtspAddress: :8554
+
+# RTMP (disabled)
+rtmp: no
+rtmpAddress: :1935
+
+# HLS (disabled)
+hls: no
+hlsAddress: :8888
+
+# SRT (disabled)
+srt: no
+srtAddress: :8890
+
+# Paths - streams จะถูกสร้างอัตโนมัติ
+paths:
+  all_others:
