@@ -9,6 +9,7 @@
 
   # MediaMTX WebRTC (WHIP/WHEP)
   handle /streams/* {
+    uri strip_prefix /streams
     reverse_proxy {$MEDIAMTX_HOST}:8889
   }
 
