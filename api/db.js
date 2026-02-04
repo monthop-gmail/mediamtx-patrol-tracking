@@ -27,6 +27,16 @@ async function initDB() {
       recorded_at TIMESTAMP DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_gps_soldier ON gps_logs(soldier_id, recorded_at DESC);
+
+    CREATE TABLE IF NOT EXISTS sos_events (
+      id SERIAL PRIMARY KEY,
+      soldier_id INTEGER REFERENCES soldiers(id),
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      status VARCHAR(20) DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      resolved_at TIMESTAMPTZ
+    );
   `);
   console.log("DB initialized");
 }

@@ -1,0 +1,17 @@
+{
+  "name": "Patrol Tracker",
+  "short_name": "Patrol",
+  "description": "ระบบติดตามการลาดตระเวน",
+  "start_url": "/soldier.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111111",
+  "theme_color": "#22aa77",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%2322aa77' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='white'>P</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

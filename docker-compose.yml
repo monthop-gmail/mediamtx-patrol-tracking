@@ -14,6 +14,9 @@ services:
       - DB_NAME=patrol
       - DB_USER=patrol
       - DB_PASS=patrol123
+      - MEDIAMTX_HOST=${MEDIAMTX_HOST:-host.docker.internal}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,37 +7,188 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: sans-serif; display: flex; height: 100vh; background: #111; color: #eee; }
-    #sidebar { width: 320px; background: #1a1a1a; overflow-y: auto; border-right: 1px solid #333; }
-    #sidebar h2 { padding: 16px; font-size: 16px; border-bottom: 1px solid #333; }
-    .soldier-item { padding: 12px 16px; border-bottom: 1px solid #222; cursor: pointer; }
-    .soldier-item:hover { background: #252525; }
-    .soldier-item .callsign { font-weight: bold; font-size: 15px; }
-    .soldier-item .coords { font-size: 12px; color: #888; margin-top: 4px; }
+    body { font-family: sans-serif; display: flex; height: 100vh; background: #0d1117; color: #e0e0e0; }
+    #sidebar { width: 320px; background: #161b22; overflow-y: auto; border-right: 1px solid #30363d; }
+    #sidebar h2 { padding: 16px; font-size: 16px; border-bottom: 1px solid #30363d; color: #00ff88; }
+    .soldier-item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
+    .soldier-item:hover { background: #1c2128; }
+    .soldier-item .callsign { font-weight: bold; font-size: 15px; font-family: 'Courier New', monospace; }
+    .soldier-item .coords { font-size: 12px; color: #8b949e; margin-top: 4px; font-family: 'Courier New', monospace; }
     .soldier-item .status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-    .online { background: #2a7; }
-    .offline { background: #a33; }
+    .online { background: #00ff88; }
+    .offline { background: #ff4444; }
     #map-container { flex: 1; position: relative; min-height: 0; }
     #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
     /* Video popup */
-    #video-panel { display: none; position: absolute; bottom: 16px; right: 16px; width: 420px; background: #1a1a1a; border-radius: 8px; overflow: hidden; z-index: 1000; box-shadow: 0 4px 20px rgba(0,0,0,.6); }
-    #video-panel .header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #252525; }
+    #video-panel { display: none; position: absolute; bottom: 16px; right: 16px; width: 420px; background: #161b22; border-radius: 8px; overflow: hidden; z-index: 1000; box-shadow: 0 4px 20px rgba(0,0,0,.8); border: 1px solid #30363d; }
+    #video-panel .header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #1c2128; }
     #video-panel .header span { font-weight: bold; }
     #video-panel .close-btn { background: none; border: none; color: #eee; font-size: 20px; cursor: pointer; }
     #video-panel video { width: 100%; background: #000; }
-    #video-panel .video-status { padding: 4px 12px; font-size: 12px; color: #888; }
-    #track-btn { margin: 8px 12px 12px; padding: 6px 14px; background: #2a7; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    #video-panel .video-status { padding: 4px 12px; font-size: 12px; color: #8b949e; }
+    #track-btn, #capture-btn { margin: 8px 12px 12px; padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
+    #track-btn { background: #00ff88; color: #0d1117; }
+    #capture-btn { background: #42a5f5; color: #fff; margin-left: 0; }
+
+    /* Connection status bar */
+    #conn-bar {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 1050;
+      padding: 4px 16px; font-size: 12px; text-align: center;
+      transition: background .3s;
+    }
+    #conn-bar.ok { background: rgba(27,94,32,.85); color: #a5d6a7; }
+    #conn-bar.warn { background: rgba(230,81,0,.85); color: #ffe0b2; }
+    #conn-bar.err { background: rgba(183,28,28,.85); color: #ef9a9a; }
+
+    /* SOS notification banner */
+    #sos-banner {
+      display: none; position: absolute; top: 0; left: 0; right: 0; z-index: 1100;
+      padding: 12px 20px; background: #d32f2f; color: #fff; font-weight: bold;
+      font-size: 15px; text-align: center; cursor: pointer;
+      animation: sos-flash 0.8s infinite alternate;
+    }
+    @keyframes sos-flash { to { background: #b71c1c; } }
+    #sos-banner .close-sos { background: none; border: 1px solid #fff; color: #fff; padding: 2px 10px; border-radius: 4px; cursor: pointer; margin-left: 12px; font-size: 13px; }
+
+    /* SOS pulsing marker */
+    .sos-marker {
+      animation: marker-pulse 0.6s infinite alternate;
+    }
+    @keyframes marker-pulse {
+      from { filter: hue-rotate(0deg) brightness(1); }
+      to { filter: hue-rotate(-30deg) brightness(1.5); }
+    }
+    .sos-icon {
+      background: #d32f2f; color: #fff; border-radius: 50%;
+      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 11px; border: 2px solid #fff;
+      box-shadow: 0 0 12px rgba(211,47,47,.7);
+      animation: sos-icon-pulse 0.6s infinite alternate;
+    }
+    @keyframes sos-icon-pulse {
+      to { box-shadow: 0 0 24px 8px rgba(211,47,47,.9); transform: scale(1.15); }
+    }
+
+    /* SOS badge in sidebar */
+    .sos-badge {
+      display: inline-block; background: #d32f2f; color: #fff; font-size: 10px;
+      padding: 1px 6px; border-radius: 8px; margin-left: 6px; font-weight: bold;
+      animation: sos-flash 0.8s infinite alternate;
+    }
+
+    /* Sidebar stats footer */
+    #sidebar-footer {
+      padding: 12px 16px; border-top: 1px solid #30363d; background: #0d1117;
+      font-size: 12px; color: #8b949e; font-family: 'Courier New', monospace;
+      position: sticky; bottom: 0;
+    }
+    #sidebar-footer .clock { font-size: 14px; color: #00ff88; font-weight: bold; margin-bottom: 6px; }
+    #sidebar-footer .stat-row { display: flex; justify-content: space-between; margin-top: 3px; }
+    #sidebar-footer .stat-val { color: #e0e0e0; }
+    #sidebar-footer .sos-val { color: #ff4444; font-weight: bold; }
+
+    /* Sidebar quick filter buttons */
+    #sidebar-actions {
+      display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid #30363d; flex-wrap: wrap;
+    }
+    .sb-btn {
+      padding: 4px 8px; font-size: 11px; border: 1px solid #30363d; border-radius: 4px;
+      background: #1c2128; color: #8b949e; cursor: pointer; white-space: nowrap;
+    }
+    .sb-btn:hover { background: #2d333b; color: #e0e0e0; }
+    .sb-btn.active { background: #00ff88; color: #0d1117; border-color: #00ff88; }
+
+    /* Camera toggle in soldier list */
+    .cam-toggle {
+      float: right; padding: 2px 8px; font-size: 14px; border: 1px solid #30363d;
+      border-radius: 4px; background: #1c2128; color: #8b949e; cursor: pointer;
+      line-height: 1;
+    }
+    .cam-toggle:hover { border-color: #00ff88; color: #00ff88; }
+    .cam-toggle.on { background: #00ff88; color: #0d1117; border-color: #00ff88; }
+
+    /* View toggle toolbar */
+    #view-toolbar {
+      position: absolute; top: 10px; left: 10px; z-index: 1060;
+      display: flex; gap: 0; border-radius: 6px; overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,.5);
+    }
+    .vt-btn {
+      padding: 8px 16px; font-size: 13px; font-weight: bold; border: none;
+      cursor: pointer; background: #161b22; color: #8b949e;
+    }
+    .vt-btn:hover { background: #2d333b; }
+    .vt-btn.active { background: #00ff88; color: #0d1117; }
+
+    /* Video grid */
+    #video-grid {
+      display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 24px;
+      background: #0d1117; z-index: 1040; overflow: auto;
+      display: none; /* hidden by default, map mode */
+    }
+    #video-grid.active {
+      display: grid; gap: 4px; padding: 4px;
+      grid-template-columns: 1fr;
+    }
+
+    /* Grid cell */
+    .grid-cell {
+      position: relative; background: #000; border-radius: 6px; overflow: hidden;
+      border: 1px solid #30363d; min-height: 180px;
+    }
+    .grid-cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .grid-cell .cell-overlay {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 6px 10px; background: linear-gradient(rgba(0,0,0,.7), transparent);
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; font-family: 'Courier New', monospace;
+    }
+    .grid-cell .cell-callsign { font-weight: bold; color: #00ff88; }
+    .grid-cell .cell-status { color: #8b949e; font-size: 11px; }
+    .grid-cell .cell-actions { display: flex; gap: 4px; }
+    .grid-cell .cell-btn {
+      background: rgba(255,255,255,.15); border: none; color: #fff;
+      width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-size: 14px;
+    }
+    .grid-cell .cell-btn:hover { background: rgba(255,255,255,.3); }
+    .grid-cell .cell-btn.pinned { background: #00ff88; color: #0d1117; }
+    .grid-cell .no-signal {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #555; font-size: 14px; background: #111;
+    }
+
+    /* Pinned cell */
+    .grid-cell.pinned { grid-column: span 2; grid-row: span 2; order: -1; border-color: #00ff88; }
   </style>
 </head>
 <body>
 
 <div id="sidebar">
   <h2>ทหารลาดตระเวน <span id="online-count">(0)</span></h2>
+  <div id="sidebar-actions">
+    <button class="sb-btn" onclick="gridOpenAll()">เปิดทั้งหมด</button>
+    <button class="sb-btn" onclick="gridCloseAll()">ปิดทั้งหมด</button>
+    <button class="sb-btn" onclick="gridSosOnly()">เฉพาะ SOS</button>
+  </div>
   <div id="soldier-list"></div>
+  <div id="sidebar-footer">
+    <div class="clock" id="footer-clock">--:--:--</div>
+    <div class="stat-row"><span>กำลังพล</span><span class="stat-val" id="ft-total">0</span></div>
+    <div class="stat-row"><span>Online</span><span class="stat-val" id="ft-online">0</span></div>
+    <div class="stat-row"><span>SOS Active</span><span class="sos-val" id="ft-sos">0</span></div>
+  </div>
 </div>
 
 <div id="map-container">
+  <div id="sos-banner"></div>
+  <div id="view-toolbar">
+    <button class="vt-btn active" onclick="toggleView('map')">&#x1F5FA; แผนที่</button>
+    <button class="vt-btn" onclick="toggleView('grid')">&#x1F4F9; Video Grid</button>
+  </div>
   <div id="map"></div>
+  <div id="video-grid"></div>
+  <div id="conn-bar" class="ok">Server: เชื่อมต่อปกติ</div>
   <div id="video-panel">
     <div class="header">
       <span id="video-title">—</span>
@@ -45,7 +196,10 @@
     </div>
     <video id="remoteVideo" autoplay playsinline></video>
     <div class="video-status" id="video-status">รอสัญญาณ...</div>
-    <button id="track-btn" onclick="showTrack()">แสดงเส้นทาง</button>
+    <div style="display:flex;gap:8px;">
+      <button id="track-btn" onclick="showTrack()">แสดงเส้นทาง</button>
+      <button id="capture-btn" onclick="captureScreenshot()">&#128247; จับภาพ</button>
+    </div>
   </div>
 </div>
 
@@ -59,18 +213,55 @@ const WHEP_BASE = location.protocol === "https:"
 
 /* ====== Map ====== */
 const map = L.map("map").setView([13.75, 100.5], 6);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap"
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  subdomains: "abcd",
+  maxZoom: 20
 }).addTo(map);
 
 const soldiers = {};    // soldierId → { marker, data, ... }
 let trackLine = null;
 let selectedSoldierId = null;
+const activeSOS = {};   // soldierId → { callsign, lat, lng, ... }
+
+// Phase 3+10: Video Grid state
+const activeVideos = new Map(); // soldierId → { pc, videoEl, cellEl, streamPath }
+let currentView = 'map';       // 'map' | 'grid'
+let pinnedSoldierId = null;
+const MAX_GRID_VIDEOS = 9;
+
+// SOS alert sound (generated via Web Audio API)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSosAlert() {
+  // 3 beeps
+  [0, 0.25, 0.5].forEach(delay => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = 880;
+    gain.gain.value = 0.3;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(audioCtx.currentTime + delay);
+    osc.stop(audioCtx.currentTime + delay + 0.15);
+  });
+}
 
 /* ====== Socket.IO ====== */
 const socket = io();
 
-socket.on("connect", () => console.log("center connected"));
+socket.on("connect", () => {
+  console.log("center connected");
+  setCenterConn("ok", "Server: เชื่อมต่อปกติ");
+});
+socket.on("disconnect", () => setCenterConn("err", "Server: ขาดการเชื่อมต่อ"));
+socket.on("reconnecting", () => setCenterConn("warn", "Server: กำลังเชื่อมต่อใหม่..."));
+
+function setCenterConn(cls, text) {
+  const bar = document.getElementById("conn-bar");
+  bar.className = cls;
+  bar.textContent = text;
+}
 
 // ทหารส่งตำแหน่ง
 socket.on("soldier:position", (data) => {
@@ -99,6 +290,10 @@ socket.on("soldier:online", (s) => {
 socket.on("soldier:offline", ({ soldierId }) => {
   if (soldiers[soldierId]) {
     soldiers[soldierId].data.is_online = false;
+    // ปิด grid video ถ้าเปิดอยู่
+    if (activeVideos.has(soldierId)) {
+      closeGridVideo(soldierId);
+    }
     updateSidebar();
   }
 });
@@ -106,6 +301,46 @@ socket.on("soldier:offline", ({ soldierId }) => {
 // stream update (เปลี่ยนจาก feed_update)
 socket.on("soldier:stream_update", ({ soldierId, streamPath }) => {
   if (soldiers[soldierId]) soldiers[soldierId].data.stream_path = streamPath;
+});
+
+// SOS — ทหารกดปุ่มฉุกเฉิน
+socket.on("soldier:sos", (data) => {
+  const { soldierId, callsign, lat, lng } = data;
+  activeSOS[soldierId] = data;
+
+  // เปลี่ยน marker เป็น SOS icon
+  if (soldiers[soldierId] && soldiers[soldierId].marker) {
+    const sosIcon = L.divIcon({
+      className: 'sos-marker',
+      html: '<div class="sos-icon">SOS</div>',
+      iconSize: [28, 28],
+      iconAnchor: [14, 14]
+    });
+    soldiers[soldierId].hadSOS = true;
+    soldiers[soldierId].marker.setIcon(sosIcon);
+  }
+
+  // Pan ไปที่ตำแหน่ง SOS
+  if (lat && lng) map.setView([lat, lng], 15);
+
+  // แสดง banner
+  showSosBanner(soldierId, callsign, lat, lng);
+
+  // เล่นเสียง
+  playSosAlert();
+
+  updateSidebar();
+});
+
+// SOS ยกเลิก
+socket.on("soldier:sos-cancel", ({ soldierId }) => {
+  clearSos(soldierId);
+  updateSidebar();
+});
+
+// Dashboard stats broadcast
+socket.on("dashboard:stats", (stats) => {
+  updateStatsFooter(stats);
 });
 
 // โหลดทหารที่ online อยู่แล้ว
@@ -128,10 +363,15 @@ function updateSidebar() {
   list.innerHTML = entries.map(([id, v]) => {
     const d = v.data;
     const on = d.is_online;
-    return `<div class="soldier-item" onclick="selectSoldier(${id})">
-      <span class="status ${on ? 'online' : 'offline'}"></span>
-      <span class="callsign">${d.callsign || 'Unknown'}</span>
-      <div class="coords">${d.lat ? `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}` : 'ยังไม่มีตำแหน่ง'}</div>
+    const hasSOS = !!activeSOS[id];
+    const hasVideo = activeVideos.has(parseInt(id));
+    return `<div class="soldier-item">
+      ${on ? `<button class="cam-toggle ${hasVideo ? 'on' : ''}" onclick="event.stopPropagation(); toggleGridVideo(${id})" title="${hasVideo ? 'ปิด Video' : 'เปิด Video'}">&#x1F4F9;</button>` : ''}
+      <span onclick="selectSoldier(${id})" style="cursor:pointer">
+        <span class="status ${on ? 'online' : 'offline'}"></span>
+        <span class="callsign">${d.callsign || 'Unknown'}</span>${hasSOS ? '<span class="sos-badge">SOS</span>' : ''}
+        <div class="coords">${d.lat ? `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}` : 'ยังไม่มีตำแหน่ง'}</div>
+      </span>
     </div>`;
   }).join("");
 }
@@ -178,7 +418,7 @@ async function showTrack() {
   const points = await resp.json();
   if (points.length === 0) return alert("ยังไม่มีข้อมูลเส้นทาง");
   const latlngs = points.map(p => [p.lat, p.lng]);
-  trackLine = L.polyline(latlngs, { color: "#f80", weight: 3 }).addTo(map);
+  trackLine = L.polyline(latlngs, { color: "#00ff88", weight: 3, opacity: 0.8 }).addTo(map);
   map.fitBounds(trackLine.getBounds(), { padding: [40, 40] });
 }
 
@@ -253,6 +493,318 @@ async function subscribeWHEP(streamPath) {
     console.error("WHEP error:", err);
     document.getElementById("video-status").textContent = "ไม่พบ stream หรือเชื่อมต่อล้มเหลว";
   }
+}
+
+/* ====== Phase 3+10: Video Grid ====== */
+
+function toggleView(mode) {
+  currentView = mode;
+  const mapEl = document.getElementById("map");
+  const gridEl = document.getElementById("video-grid");
+  const btns = document.querySelectorAll(".vt-btn");
+  const panel = document.getElementById("video-panel");
+
+  if (mode === 'map') {
+    mapEl.style.display = "block";
+    gridEl.classList.remove("active");
+    btns[0].classList.add("active");
+    btns[1].classList.remove("active");
+    setTimeout(() => map.invalidateSize(), 100);
+  } else {
+    mapEl.style.display = "none";
+    gridEl.classList.add("active");
+    btns[0].classList.remove("active");
+    btns[1].classList.add("active");
+    panel.style.display = "none"; // ปิด video popup ในโหมด grid
+    reLayoutGrid();
+  }
+}
+
+function toggleGridVideo(soldierId) {
+  if (activeVideos.has(soldierId)) {
+    closeGridVideo(soldierId);
+  } else {
+    openGridVideo(soldierId);
+  }
+}
+
+function openGridVideo(soldierId) {
+  if (activeVideos.has(soldierId)) return;
+  if (activeVideos.size >= MAX_GRID_VIDEOS) {
+    alert(`เปิดได้สูงสุด ${MAX_GRID_VIDEOS} จอ กรุณาปิดบางจอก่อน`);
+    return;
+  }
+  const s = soldiers[soldierId];
+  if (!s || !s.data.is_online) return;
+
+  const streamPath = s.data.stream_path || s.data.callsign;
+  if (!streamPath) return;
+
+  // สร้าง grid cell
+  const cell = document.createElement("div");
+  cell.className = "grid-cell";
+  cell.id = `grid-cell-${soldierId}`;
+  cell.innerHTML = `
+    <video autoplay playsinline muted></video>
+    <div class="no-signal">กำลังเชื่อมต่อ...</div>
+    <div class="cell-overlay">
+      <div>
+        <span class="cell-callsign">${s.data.callsign}</span>
+        <span class="cell-status" id="grid-status-${soldierId}"></span>
+      </div>
+      <div class="cell-actions">
+        <button class="cell-btn" onclick="pinVideo(${soldierId})" title="Pin">&#x1F4CC;</button>
+        <button class="cell-btn" onclick="gridCapture(${soldierId})" title="จับภาพ">&#x1F4F7;</button>
+        <button class="cell-btn" onclick="closeGridVideo(${soldierId})" title="ปิด">&#x2715;</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("video-grid").appendChild(cell);
+
+  const videoEl = cell.querySelector("video");
+  const noSignal = cell.querySelector(".no-signal");
+
+  // สร้าง WHEP PeerConnection
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: `turn:${location.hostname}:3478`, username: "patrol", credential: "patrolpass" }
+    ]
+  });
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.addTransceiver("audio", { direction: "recvonly" });
+
+  pc.ontrack = (e) => {
+    videoEl.srcObject = e.streams[0];
+    noSignal.style.display = "none";
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    const st = document.getElementById(`grid-status-${soldierId}`);
+    if (!st) return;
+    if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      st.textContent = "";
+      noSignal.style.display = "none";
+    } else if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+      st.textContent = " (ขาดสัญญาณ)";
+      st.style.color = "#ff4444";
+      noSignal.textContent = "สูญเสียสัญญาณ";
+      noSignal.style.display = "flex";
+    }
+  };
+
+  activeVideos.set(soldierId, { pc, videoEl, cellEl: cell, streamPath });
+
+  // WHEP handshake
+  (async () => {
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForICEGathering(pc);
+      const whepUrl = `${WHEP_BASE}/${encodeURIComponent(streamPath)}/whep`;
+      const resp = await fetch(whepUrl, { method: "POST", headers: { "Content-Type": "application/sdp" }, body: pc.localDescription.sdp });
+      if (!resp.ok) throw new Error(`WHEP ${resp.status}`);
+      await pc.setRemoteDescription({ type: "answer", sdp: await resp.text() });
+    } catch (err) {
+      console.error(`Grid WHEP error for ${soldierId}:`, err);
+      noSignal.textContent = "เชื่อมต่อล้มเหลว";
+      noSignal.style.display = "flex";
+    }
+  })();
+
+  reLayoutGrid();
+  updateSidebar();
+
+  // สลับไป grid mode อัตโนมัติถ้ายังอยู่ map mode
+  if (currentView === 'map') toggleView('grid');
+}
+
+function closeGridVideo(soldierId) {
+  const entry = activeVideos.get(soldierId);
+  if (!entry) return;
+  entry.pc.close();
+  entry.cellEl.remove();
+  activeVideos.delete(soldierId);
+  if (pinnedSoldierId === soldierId) pinnedSoldierId = null;
+  reLayoutGrid();
+  updateSidebar();
+}
+
+function reLayoutGrid() {
+  const grid = document.getElementById("video-grid");
+  const count = activeVideos.size;
+  if (count === 0) {
+    grid.style.gridTemplateColumns = "1fr";
+  } else if (count === 1 && !pinnedSoldierId) {
+    grid.style.gridTemplateColumns = "1fr";
+  } else if (count <= 2) {
+    grid.style.gridTemplateColumns = "1fr 1fr";
+  } else if (count <= 4) {
+    grid.style.gridTemplateColumns = "1fr 1fr";
+  } else if (count <= 6) {
+    grid.style.gridTemplateColumns = "1fr 1fr 1fr";
+  } else {
+    grid.style.gridTemplateColumns = "1fr 1fr 1fr";
+  }
+}
+
+function pinVideo(soldierId) {
+  // unpin ตัวเก่า
+  if (pinnedSoldierId !== null) {
+    const oldCell = document.getElementById(`grid-cell-${pinnedSoldierId}`);
+    if (oldCell) oldCell.classList.remove("pinned");
+    const oldBtn = oldCell?.querySelector(".cell-btn");
+    if (oldBtn) oldBtn.classList.remove("pinned");
+  }
+  // toggle pin
+  if (pinnedSoldierId === soldierId) {
+    pinnedSoldierId = null;
+  } else {
+    pinnedSoldierId = soldierId;
+    const cell = document.getElementById(`grid-cell-${soldierId}`);
+    if (cell) {
+      cell.classList.add("pinned");
+      const btn = cell.querySelector(".cell-btn");
+      if (btn) btn.classList.add("pinned");
+    }
+  }
+  reLayoutGrid();
+}
+
+function gridCapture(soldierId) {
+  const entry = activeVideos.get(soldierId);
+  if (!entry || !entry.videoEl.srcObject || entry.videoEl.videoWidth === 0) {
+    alert("ยังไม่มีสัญญาณวิดีโอ");
+    return;
+  }
+  const video = entry.videoEl;
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
+  const s = soldiers[soldierId];
+  const callsign = s ? s.data.callsign : soldierId;
+  const ts = new Date().toLocaleString("th-TH");
+  const label = `${callsign} — ${ts}`;
+  ctx.font = "bold 16px monospace";
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  const textW = ctx.measureText(label).width;
+  ctx.fillRect(8, canvas.height - 34, textW + 16, 28);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 16, canvas.height - 14);
+  const link = document.createElement("a");
+  link.download = `patrol-${callsign}-${Date.now()}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
+// Quick filter buttons
+function gridOpenAll() {
+  const entries = Object.entries(soldiers).filter(([, v]) => v.data && v.data.is_online);
+  for (const [id] of entries) {
+    if (!activeVideos.has(parseInt(id)) && activeVideos.size < MAX_GRID_VIDEOS) {
+      openGridVideo(parseInt(id));
+    }
+  }
+}
+
+function gridCloseAll() {
+  for (const id of [...activeVideos.keys()]) {
+    closeGridVideo(id);
+  }
+}
+
+function gridSosOnly() {
+  // ปิดทุกตัวก่อน แล้วเปิดเฉพาะ SOS
+  gridCloseAll();
+  for (const idStr of Object.keys(activeSOS)) {
+    const id = parseInt(idStr);
+    if (soldiers[id] && soldiers[id].data.is_online) {
+      openGridVideo(id);
+    }
+  }
+}
+
+/* ====== SOS Helpers ====== */
+
+function showSosBanner(soldierId, callsign, lat, lng) {
+  const banner = document.getElementById("sos-banner");
+  const coordsText = lat && lng ? ` (${lat.toFixed(5)}, ${lng.toFixed(5)})` : '';
+  banner.innerHTML = `&#9888;&#65039; SOS จาก <strong>${callsign}</strong>${coordsText} <button class="close-sos" onclick="dismissSosBanner()">ปิด</button>`;
+  banner.style.display = "block";
+  banner.onclick = (e) => {
+    if (e.target.classList.contains('close-sos')) return;
+    selectSoldier(soldierId);
+  };
+}
+
+function dismissSosBanner() {
+  document.getElementById("sos-banner").style.display = "none";
+}
+
+function clearSos(soldierId) {
+  delete activeSOS[soldierId];
+  // คืน marker เป็น Leaflet default icon
+  if (soldiers[soldierId] && soldiers[soldierId].marker && soldiers[soldierId].hadSOS) {
+    soldiers[soldierId].marker.setIcon(new L.Icon.Default());
+    delete soldiers[soldierId].hadSOS;
+  }
+  // ถ้าไม่มี SOS active เหลืออยู่ → ปิด banner
+  if (Object.keys(activeSOS).length === 0) {
+    document.getElementById("sos-banner").style.display = "none";
+  }
+}
+
+/* ====== Phase 2.1: Sidebar Stats Footer ====== */
+
+function updateStatsFooter(stats) {
+  if (stats) {
+    document.getElementById("ft-total").textContent = stats.totalSoldiers;
+    document.getElementById("ft-online").textContent = stats.onlineCount;
+    document.getElementById("ft-sos").textContent = stats.activeSOS;
+  }
+}
+
+// Live clock
+setInterval(() => {
+  document.getElementById("footer-clock").textContent = new Date().toLocaleTimeString("th-TH", { hour12: false });
+}, 1000);
+
+// โหลด stats ตอนเปิดหน้า
+fetch("/api/dashboard/stats").then(r => r.json()).then(updateStatsFooter).catch(() => {});
+
+/* ====== Phase 7.4: Screenshot Capture ====== */
+
+function captureScreenshot() {
+  const video = document.getElementById("remoteVideo");
+  if (!video.srcObject || video.videoWidth === 0) {
+    alert("ยังไม่มีสัญญาณวิดีโอ");
+    return;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
+
+  // วาด timestamp + callsign overlay
+  const callsign = document.getElementById("video-title").textContent;
+  const ts = new Date().toLocaleString("th-TH");
+  const label = `${callsign} — ${ts}`;
+  ctx.font = "bold 16px monospace";
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  const textW = ctx.measureText(label).width;
+  ctx.fillRect(8, canvas.height - 34, textW + 16, 28);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 16, canvas.height - 14);
+
+  // ดาวน์โหลด
+  const link = document.createElement("a");
+  link.download = `patrol-${callsign}-${Date.now()}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
 }
 
 // Wait for ICE gathering to complete

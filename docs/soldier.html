@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#22aa77">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
   <title>Patrol — Soldier</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -15,6 +19,60 @@
     #status-bar { padding: 10px 16px; background: #1a1a1a; font-size: 14px; display: flex; justify-content: space-between; }
     .online { color: #2a7; }
     .offline { color: #a33; }
+
+    /* Connection status bar */
+    #conn-bar {
+      display: none; padding: 6px 16px; font-size: 13px; font-weight: bold;
+      text-align: center; transition: background .3s;
+    }
+    #conn-bar.ok { background: #1b5e20; color: #a5d6a7; }
+    #conn-bar.warn { background: #e65100; color: #ffe0b2; animation: conn-blink 1.5s infinite alternate; }
+    #conn-bar.err { background: #b71c1c; color: #ef9a9a; }
+    @keyframes conn-blink { to { opacity: .7; } }
+
+    /* Floating action buttons */
+    .fab-container { position: fixed; bottom: 60px; right: 16px; display: flex; flex-direction: column; gap: 12px; z-index: 100; }
+
+    /* SOS Button */
+    #sos-btn {
+      width: 72px; height: 72px; border-radius: 50%; border: 3px solid #fff;
+      background: #d32f2f; color: #fff; font-size: 18px; font-weight: bold;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 16px rgba(211,47,47,.5);
+      user-select: none; -webkit-user-select: none;
+      transition: transform .1s;
+    }
+    #sos-btn:active { transform: scale(0.92); }
+    #sos-btn.holding { animation: sos-pulse .4s infinite alternate; }
+    @keyframes sos-pulse { to { box-shadow: 0 0 24px 8px rgba(211,47,47,.8); } }
+
+    /* SOS Active state */
+    #sos-btn.active { background: #ff6f00; border-color: #ff6f00; }
+
+    /* SOS progress ring */
+    #sos-btn .ring {
+      position: absolute; width: 80px; height: 80px; border-radius: 50%;
+      border: 3px solid transparent; border-top-color: #fff;
+      display: none;
+    }
+    #sos-btn.holding .ring { display: block; animation: ring-spin 1s linear; }
+    @keyframes ring-spin { to { transform: rotate(360deg); } }
+
+    /* Camera switch button */
+    #switch-cam-btn {
+      width: 52px; height: 52px; border-radius: 50%; border: 2px solid #555;
+      background: rgba(30,30,30,.85); color: #eee; font-size: 22px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    #switch-cam-btn.hidden { display: none; }
+
+    /* SOS active banner */
+    #sos-banner {
+      display: none; padding: 8px 16px; background: #d32f2f; color: #fff;
+      text-align: center; font-weight: bold; font-size: 14px;
+      animation: banner-flash 1s infinite alternate;
+    }
+    @keyframes banner-flash { to { background: #b71c1c; } }
   </style>
 </head>
 <body>
@@ -27,7 +85,13 @@
 </div>
 
 <div id="streaming">
+  <div id="conn-bar"></div>
+  <div id="sos-banner">SOS ส่งแล้ว — ศูนย์บัญชาการได้รับแจ้งเตือน <button onclick="cancelSOS()" style="margin-left:12px;background:#fff;color:#d32f2f;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;">ยกเลิก SOS</button></div>
   <video id="localVideo" autoplay playsinline muted></video>
+  <div class="fab-container">
+    <button id="switch-cam-btn" title="สลับกล้อง">&#x21BB;</button>
+    <button id="sos-btn" title="กดค้าง 1 วินาทีเพื่อส่ง SOS"><span class="ring"></span>SOS</button>
+  </div>
   <div id="status-bar">
     <span id="gps-status">GPS: รอสัญญาณ...</span>
     <span id="stream-status" class="offline">กำลังเชื่อมต่อ...</span>
@@ -43,6 +107,12 @@ const WHIP_BASE = location.protocol === "https:"
 
 let socket, pc, stream;
 let currentCallsign = null;
+let currentFacingMode = 'environment';
+let currentLat = null, currentLng = null;
+let sosActive = false;
+let sosHoldTimer = null;
+let whipRetryCount = 0;
+const WHIP_MAX_RETRIES = 5;
 
 async function startPatrol() {
   const callsign = document.getElementById("callsign").value.trim();
@@ -69,7 +139,10 @@ async function startPatrol() {
   socket = io();
   socket.on("connect", () => {
     socket.emit("soldier:join", { callsign, name });
+    updateConnBar();
   });
+  socket.on("reconnecting", () => updateConnBar());
+  socket.on("disconnect", () => updateConnBar());
   socket.on("soldier:registered", (soldier) => {
     console.log("registered", soldier);
   });
@@ -79,6 +152,8 @@ async function startPatrol() {
     navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        currentLat = lat;
+        currentLng = lng;
         document.getElementById("gps-status").textContent =
           `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} (±${Math.round(accuracy)}m)`;
         socket.emit("soldier:gps", { lat, lng, accuracy });
@@ -90,15 +165,34 @@ async function startPatrol() {
     );
   }
 
-  // 4) เชื่อมต่อ MediaMTX via WHIP (publish)
+  // 4) ตรวจจำนวนกล้อง → ซ่อนปุ่มเฉพาะถ้ายืนยันว่ามีกล้องเดียว
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter(d => d.kind === 'videoinput');
+    if (videoInputs.length < 2) {
+      document.getElementById("switch-cam-btn").classList.add("hidden");
+    }
+  } catch (e) { /* ตรวจไม่ได้ → แสดงปุ่มไว้ก่อน ถ้าสลับไม่ได้ค่อย handle */ }
+
+  // 5) เชื่อมต่อ MediaMTX via WHIP (publish)
   publishWHIP(callsign);
 }
 
 /* ====== MediaMTX WHIP Publisher ====== */
 
 async function publishWHIP(streamPath) {
-  document.getElementById("stream-status").textContent = "กำลังเชื่อมต่อ...";
+  // ตรวจ retry limit
+  if (whipRetryCount >= WHIP_MAX_RETRIES) {
+    document.getElementById("stream-status").textContent = `เชื่อมต่อล้มเหลว (ครบ ${WHIP_MAX_RETRIES} ครั้ง)`;
+    document.getElementById("stream-status").className = "offline";
+    updateConnBar();
+    return;
+  }
+
+  const retryLabel = whipRetryCount > 0 ? ` (ครั้งที่ ${whipRetryCount}/${WHIP_MAX_RETRIES})` : "";
+  document.getElementById("stream-status").textContent = "กำลังเชื่อมต่อ..." + retryLabel;
   document.getElementById("stream-status").className = "offline";
+  updateConnBar();
 
   pc = new RTCPeerConnection({
     iceServers: [
@@ -113,33 +207,24 @@ async function publishWHIP(streamPath) {
   // Handle ICE connection state
   pc.oniceconnectionstatechange = () => {
     console.log("ICE state:", pc.iceConnectionState);
+    updateConnBar();
     if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      whipRetryCount = 0; // สำเร็จ → reset retry counter
       document.getElementById("stream-status").textContent = "กำลังส่ง Live";
       document.getElementById("stream-status").className = "online";
-      // แจ้ง API ว่า stream พร้อมแล้ว
       if (socket) socket.emit("soldier:stream", { streamPath });
     } else if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
       document.getElementById("stream-status").textContent = "ขาดการเชื่อมต่อ";
       document.getElementById("stream-status").className = "offline";
-      // Retry after 3 seconds
-      setTimeout(() => {
-        if (currentCallsign) {
-          pc.close();
-          publishWHIP(currentCallsign);
-        }
-      }, 3000);
+      scheduleRetry(streamPath);
     }
   };
 
   try {
-    // Create offer
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
-    // Wait for ICE gathering to complete
     await waitForICEGathering(pc);
 
-    // Send offer to WHIP endpoint
     const whipUrl = `${WHIP_BASE}/${encodeURIComponent(streamPath)}/whip`;
     console.log("WHIP URL:", whipUrl);
 
@@ -153,23 +238,36 @@ async function publishWHIP(streamPath) {
       throw new Error(`WHIP failed: ${response.status} ${await response.text()}`);
     }
 
-    // Set remote answer
     const answerSdp = await response.text();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-
     console.log("WHIP publish started successfully");
   } catch (err) {
     console.error("WHIP error:", err);
     document.getElementById("stream-status").textContent = "เชื่อมต่อล้มเหลว";
     document.getElementById("stream-status").className = "offline";
-    // Retry
-    setTimeout(() => {
-      if (currentCallsign) {
-        pc.close();
-        publishWHIP(currentCallsign);
-      }
-    }, 3000);
+    scheduleRetry(streamPath);
   }
+}
+
+function scheduleRetry(streamPath) {
+  if (!currentCallsign) return;
+  whipRetryCount++;
+  if (whipRetryCount >= WHIP_MAX_RETRIES) {
+    document.getElementById("stream-status").textContent = `หยุดลองใหม่ (ครบ ${WHIP_MAX_RETRIES} ครั้ง)`;
+    updateConnBar();
+    return;
+  }
+  // Exponential backoff: 3s, 6s, 12s, 24s...
+  const delay = 3000 * Math.pow(2, whipRetryCount - 1);
+  console.log(`Retry ${whipRetryCount}/${WHIP_MAX_RETRIES} in ${delay/1000}s`);
+  document.getElementById("stream-status").textContent = `ลองใหม่ใน ${delay/1000}s (${whipRetryCount}/${WHIP_MAX_RETRIES})`;
+  updateConnBar();
+  setTimeout(() => {
+    if (currentCallsign) {
+      if (pc) pc.close();
+      publishWHIP(currentCallsign);
+    }
+  }, delay);
 }
 
 // Wait for ICE gathering to complete
@@ -189,6 +287,174 @@ function waitForICEGathering(pc) {
       setTimeout(resolve, 5000);
     }
   });
+}
+
+/* ====== Connection Status Bar ====== */
+
+function updateConnBar() {
+  const bar = document.getElementById("conn-bar");
+  bar.style.display = "block";
+  const sockOk = socket && socket.connected;
+  const rtcOk = pc && (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed");
+  const rtcConnecting = pc && (pc.iceConnectionState === "checking" || pc.iceConnectionState === "new");
+
+  const retryInfo = whipRetryCount > 0 ? ` (retry ${whipRetryCount}/${WHIP_MAX_RETRIES})` : "";
+
+  if (whipRetryCount >= WHIP_MAX_RETRIES) {
+    bar.className = "err";
+    bar.textContent = `Video: หยุดลองใหม่ ครบ ${WHIP_MAX_RETRIES} ครั้ง — รีโหลดหน้าเพื่อลองอีกครั้ง`;
+  } else if (sockOk && rtcOk) {
+    bar.className = "ok";
+    bar.textContent = "Server: OK | Video: OK | GPS: " + (currentLat ? "OK" : "รอ...");
+  } else if (!sockOk) {
+    bar.className = "err";
+    bar.textContent = "Server: ขาดการเชื่อมต่อ";
+  } else if (rtcConnecting) {
+    bar.className = "warn";
+    bar.textContent = "Server: OK | Video: กำลังเชื่อมต่อ..." + retryInfo;
+  } else {
+    bar.className = "warn";
+    bar.textContent = "Server: OK | Video: " + (pc ? pc.iceConnectionState : "รอ...") + retryInfo;
+  }
+}
+
+/* ====== Phase 8: Camera Switch ====== */
+
+document.getElementById("switch-cam-btn").addEventListener("click", async () => {
+  if (!stream) return;
+  const btn = document.getElementById("switch-cam-btn");
+  btn.style.opacity = "0.5";
+  btn.style.pointerEvents = "none";
+
+  const oldVideoTrack = stream.getVideoTracks()[0];
+  const newMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+  try {
+    // 1) หยุด track เก่าก่อน — มือถือหลายรุ่นเปิด 2 กล้องพร้อมกันไม่ได้
+    oldVideoTrack.stop();
+    stream.removeTrack(oldVideoTrack);
+
+    // 2) เปิดกล้องใหม่
+    let newStream;
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: newMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+    } catch (e) {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: newMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+    }
+    const newVideoTrack = newStream.getVideoTracks()[0];
+
+    // 3) Replace track ใน PeerConnection (ไม่ต้อง renegotiate)
+    if (pc) {
+      const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (sender) await sender.replaceTrack(newVideoTrack);
+    }
+
+    // 4) อัปเดต local stream + preview
+    stream.addTrack(newVideoTrack);
+    document.getElementById("localVideo").srcObject = stream;
+    currentFacingMode = newMode;
+
+    if (socket) socket.emit("soldier:camera-switch", { facingMode: currentFacingMode });
+    console.log("Camera switched to:", currentFacingMode);
+  } catch (err) {
+    console.error("Camera switch failed:", err);
+    // สลับไม่ได้ → เปิดกล้องเดิมกลับมา
+    try {
+      const fallback = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      const fbTrack = fallback.getVideoTracks()[0];
+      stream.addTrack(fbTrack);
+      document.getElementById("localVideo").srcObject = stream;
+      if (pc) {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) await sender.replaceTrack(fbTrack);
+      }
+    } catch (e2) {
+      console.error("Fallback camera also failed:", e2);
+    }
+    alert("ไม่สามารถสลับกล้องได้");
+  } finally {
+    btn.style.opacity = "1";
+    btn.style.pointerEvents = "auto";
+  }
+});
+
+/* ====== Phase 1: SOS Button ====== */
+// Long press 1s = ส่งทันที, กดสั้น = confirm dialog
+
+const sosBtn = document.getElementById("sos-btn");
+let sosTriggered = false;
+
+function sosStart(e) {
+  if (e) e.preventDefault();
+  if (sosActive) return;
+  sosTriggered = false;
+  sosBtn.classList.add("holding");
+  sosHoldTimer = setTimeout(() => {
+    sosTriggered = true;
+    triggerSOS();
+  }, 1000);
+}
+
+function sosEnd(e) {
+  if (e) e.preventDefault();
+  sosBtn.classList.remove("holding");
+  if (sosHoldTimer) { clearTimeout(sosHoldTimer); sosHoldTimer = null; }
+  // ถ้ากดสั้น (ยังไม่ถึง 1 วินาที) → ถาม confirm
+  if (!sosTriggered && !sosActive) {
+    if (confirm("ส่ง SOS ฉุกเฉิน?")) {
+      triggerSOS();
+    }
+  }
+}
+
+// Pointer events (desktop + modern mobile)
+sosBtn.addEventListener("pointerdown", sosStart);
+sosBtn.addEventListener("pointerup", sosEnd);
+sosBtn.addEventListener("pointercancel", () => {
+  sosBtn.classList.remove("holding");
+  if (sosHoldTimer) { clearTimeout(sosHoldTimer); sosHoldTimer = null; }
+});
+
+// Touch events fallback (iOS Safari)
+sosBtn.addEventListener("touchstart", sosStart, { passive: false });
+sosBtn.addEventListener("touchend", sosEnd, { passive: false });
+
+function triggerSOS() {
+  sosActive = true;
+  sosBtn.classList.remove("holding");
+  sosBtn.classList.add("active");
+  sosBtn.textContent = "SOS!";
+  document.getElementById("sos-banner").style.display = "block";
+
+  if (socket) {
+    socket.emit("soldier:sos", {
+      soldierId: socket.soldierId,
+      callsign: currentCallsign,
+      lat: currentLat,
+      lng: currentLng,
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
+function cancelSOS() {
+  sosActive = false;
+  sosBtn.classList.remove("active");
+  sosBtn.innerHTML = '<span class="ring"></span>SOS';
+  document.getElementById("sos-banner").style.display = "none";
+
+  if (socket) {
+    socket.emit("soldier:sos-cancel");
+  }
 }
 </script>
 </body>
